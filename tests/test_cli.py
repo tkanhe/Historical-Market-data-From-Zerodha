@@ -69,6 +69,18 @@ class TestBuildParser:
         ])
         assert args.interval == "minute"
 
+    def test_seconds_interval(self):
+        args = self._parse([
+            "download",
+            "--enctoken", "TOKEN",
+            "-s", "RELIANCE",
+            "-e", "NSE",
+            "--start", "2026-11-06",
+            "--end", "2026-11-09",
+            "--interval", "15second",
+        ])
+        assert args.interval == "15second"
+
     def test_oi_flag(self):
         args = self._parse([
             "download",
@@ -205,3 +217,20 @@ class TestPartialDownload:
         assert exc_info.value.code == 2
         assert (tmp_path / "out.csv").exists()
         assert "1 of 3 date ranges failed" in capsys.readouterr().err
+
+
+class TestSecondsDownload:
+
+    @patch("pyzdata.cli._build_client")
+    @patch("sys.argv", TestMainErrorPaths._DOWNLOAD_ARGS + ["--interval", "15second"])
+    def test_seconds_value_reaches_get_data(self, mock_build, capsys):
+        import pandas as pd
+
+        from pyzdata import Interval
+
+        mock_build.return_value.get_data.return_value = pd.DataFrame(
+            {"datetime": ["2026-11-06 09:15:15"], "close": [100.0]}
+        )
+        main()
+
+        assert mock_build.return_value.get_data.call_args.args[3] is Interval.SECOND_15

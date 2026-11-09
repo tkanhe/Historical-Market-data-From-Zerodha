@@ -35,6 +35,7 @@ from pyzdata._web_helpers import (
     instrument_options,
     period_to_dates,
     search_contracts,
+    seconds_range,
 )
 from pyzdata._xlsx import EXCEL_MAX_ROWS, to_excel_bytes
 from pyzdata.downloader import _max_days
@@ -44,6 +45,7 @@ from pyzdata.exceptions import (
     PartialDataError,
     PyZDataError,
 )
+from pyzdata.models import SECONDS_RETENTION_TRADING_DAYS
 
 _REPO_URL = "https://github.com/vikassharma545/Historical-Market-data-From-Zerodha"
 _DEFAULT_PERIOD = "1Y"
@@ -208,7 +210,12 @@ def _pick_instrument(client: PyZData) -> Tuple[str, Optional[str]]:
     return exchange, symbol
 
 
-def _pick_dates() -> Optional[Tuple[date, date]]:
+_SECONDS_NOTE = (
+    f"Zerodha keeps seconds candles for only the last {SECONDS_RETENTION_TRADING_DAYS} trading days"
+)
+
+
+def _pick_dates(interval: Interval) -> Optional[Tuple[date, date]]:
     today = date.today()
     period = st.pills(
         "Period", list(PERIODS) + [_CUSTOM], default=_DEFAULT_PERIOD, key="period",
@@ -216,16 +223,30 @@ def _pick_dates() -> Optional[Tuple[date, date]]:
 
     if period != _CUSTOM:
         start, end = period_to_dates(period, today)
-        st.caption(f"{start:%d %b %Y} → {end:%d %b %Y}")
-        return start, end
+    else:
+        left, right = st.columns(2)
+        start = left.date_input("From", value=today - timedelta(days=365), max_value=today)
+        end = right.date_input("To", value=today, max_value=today)
+        if start > end:
+            st.error("The From date must be on or before the To date.")
+            return None
 
-    left, right = st.columns(2)
-    start = left.date_input("From", value=today - timedelta(days=365), max_value=today)
-    end = right.date_input("To", value=today, max_value=today)
-    if start > end:
-        st.error("The From date must be on or before the To date.")
-        return None
+    if interval.is_seconds:
+        return _seconds_dates(start, end, today)
+    if period != _CUSTOM:
+        st.caption(f"{start:%d %b %Y} → {end:%d %b %Y}")
     return start, end
+
+
+def _seconds_dates(start: date, end: date, today: date) -> Optional[Tuple[date, date]]:
+    """Trim to the days that can still have seconds candles, and say so."""
+    trimmed = seconds_range(start, end, today)
+    if trimmed is None:
+        st.error(f"{_SECONDS_NOTE}, so this period has none. Pick 1W or a recent custom range.")
+        return None
+    skipped = " — earlier dates are skipped." if trimmed[0] > start else "."
+    st.caption(f"{trimmed[0]:%d %b %Y} → {trimmed[1]:%d %b %Y} · {_SECONDS_NOTE}{skipped}")
+    return trimmed
 
 
 def _pick_interval() -> Tuple[str, Interval]:
@@ -237,6 +258,7 @@ def _pick_interval() -> Tuple[str, Interval]:
             "Other interval",
             [label for label in INTERVALS if label not in MAIN_INTERVALS],
             label_visibility="collapsed",
+            key="other_interval",
         )
     return choice, INTERVALS[choice]
 
@@ -255,8 +277,12 @@ def render_downloader(client: PyZData) -> None:
 
     with controls:
         exchange, symbol = _pick_instrument(client)
-        dates = _pick_dates()
+        # The period sits above the interval but depends on it (seconds candles
+        # only reach back a few days), so its box is filled in afterwards.
+        period_box = st.container()
         interval_label, interval = _pick_interval()
+        with period_box:
+            dates = _pick_dates(interval)
 
         with_oi = False
         if exchange in DERIVATIVE_EXCHANGES:
@@ -395,9 +421,13 @@ def _outcome(job: dict) -> Tuple[Optional[dict], Optional[Tuple[str, str]]]:
         return None, ("error", str(exc))
 
     if df.empty:
+        interval = INTERVALS.get(interval_label)
+        if interval is not None and interval.is_seconds:
+            hint = f"{_SECONDS_NOTE}, and none for days the market was closed."
+        else:
+            hint = "It may not have been listed yet — try a different period."
         return None, ("warning", (
-            f"Zerodha has no {interval_label.lower()} data for **{symbol}** in this period. "
-            "It may not have been listed yet — try a different period."
+            f"Zerodha has no {interval_label.lower()} data for **{symbol}** in this period. {hint}"
         ))
 
     # Keep only bytes and small frames: Streamlit holds session state in
@@ -469,7 +499,8 @@ def render_help() -> None:
 volume` (plus `open_interest` for futures & options). Times are in IST.
 
 **Which interval should I pick?** *Day* for long-term trends and backtests; *1 hour* to
-*15 min* for swing trading; *5 min* and *1 min* for intraday work. Shorter intervals make
+*15 min* for swing trading; *5 min* and *1 min* for intraday work. The seconds intervals
+(*5 sec* … *45 sec*, under *Other*) only cover the last 2 trading days. Shorter intervals make
 much bigger files and take longer to download.
 
 **I can't find my instrument.** Check the exchange first — shares and indices are on

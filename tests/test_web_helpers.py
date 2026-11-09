@@ -19,6 +19,7 @@ from pyzdata._web_helpers import (
     instrument_options,
     period_to_dates,
     search_contracts,
+    seconds_range,
 )
 from pyzdata.models import Interval
 
@@ -59,6 +60,10 @@ class TestTables:
     def test_every_interval_is_offered(self):
         assert set(INTERVALS.values()) == set(Interval)
 
+    def test_other_intervals_start_with_seconds(self):
+        other = [label for label in INTERVALS if label not in MAIN_INTERVALS]
+        assert other[:5] == ["5 sec", "10 sec", "15 sec", "30 sec", "45 sec"]
+
     def test_main_intervals_are_a_subset_starting_with_day(self):
         assert MAIN_INTERVALS[0] == "Day"
         assert set(MAIN_INTERVALS) <= set(INTERVALS)
@@ -82,6 +87,34 @@ class TestPeriodToDates:
     def test_unknown_label_raises(self):
         with pytest.raises(KeyError):
             period_to_dates("Custom", today=date(2024, 3, 15))
+
+
+# ── seconds_range ───────────────────────────────────────────────────────────
+
+
+class TestSecondsRange:
+    TODAY = date(2026, 11, 9)
+
+    def test_long_period_is_trimmed_to_the_last_week(self):
+        assert seconds_range(date(2025, 11, 9), self.TODAY, self.TODAY) == (date(2026, 11, 2), self.TODAY)
+
+    def test_one_week_is_kept_whole(self):
+        start, end = period_to_dates("1W", self.TODAY)
+        assert seconds_range(start, end, self.TODAY) == (start, end)
+
+    def test_short_recent_range_is_unchanged(self):
+        assert seconds_range(date(2026, 11, 6), date(2026, 11, 7), self.TODAY) == (
+            date(2026, 11, 6), date(2026, 11, 7),
+        )
+
+    def test_trims_relative_to_today_not_the_end_date(self):
+        assert seconds_range(date(2026, 10, 1), date(2026, 11, 4), self.TODAY) == (
+            date(2026, 11, 2), date(2026, 11, 4),
+        )
+
+    def test_range_entirely_in_the_past_is_none(self):
+        assert seconds_range(date(2024, 1, 1), date(2024, 3, 31), self.TODAY) is None
+        assert seconds_range(date(2026, 10, 1), date(2026, 11, 1), self.TODAY) is None
 
 
 # ── Instrument pickers ──────────────────────────────────────────────────────

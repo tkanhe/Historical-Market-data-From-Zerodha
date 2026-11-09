@@ -3,7 +3,7 @@
 The downloader splits a date range into the largest windows the Kite API
 accepts for the requested interval and fetches them in parallel using a
 thread pool.  Daily candles fit ~5 years into one request; 1-minute candles
-need one request per 60 days.
+need one request per 60 days; seconds candles one request per 2 days.
 
 Design decisions
 ----------------
@@ -42,7 +42,7 @@ import requests
 from .config import Config
 from .exceptions import DataFetchError, PartialDataError
 from .instruments import InstrumentManager
-from .models import Interval
+from .models import SECONDS_LOOKBACK_DAYS, SECONDS_RETENTION_TRADING_DAYS, Interval
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,14 @@ _OI_COLS:   List[str] = _BASE_COLS + ["open_interest"]
 _IST_TZ = "Asia/Kolkata"
 
 # Largest date span (in days) the Kite API serves in a single request.
+# Seconds candles: Zerodha keeps only ~2 trading days, so a 2-day window is
+# all one request ever needs (and the smallest, safest span to ask for).
 _MAX_DAYS_PER_REQUEST: Dict[Interval, int] = {
+    Interval.SECOND_5:  2,
+    Interval.SECOND_10: 2,
+    Interval.SECOND_15: 2,
+    Interval.SECOND_30: 2,
+    Interval.SECOND_45: 2,
     Interval.MINUTE_1:  60,
     Interval.MINUTE_2:  60,
     Interval.MINUTE_3:  60,
@@ -71,8 +78,14 @@ _MAX_DAYS_PER_REQUEST: Dict[Interval, int] = {
 
 
 def _max_days(interval: Interval) -> int:
-    # Unknown intervals get the smallest window — slower, but always accepted.
+    # Unknown intervals get a small window — slower, but always accepted.
     return _MAX_DAYS_PER_REQUEST.get(interval, 60)
+
+
+def _seconds_cutoff() -> pd.Timestamp:
+    """The earliest day that can still have seconds candles (today in IST, minus the lookback)."""
+    today = pd.Timestamp.now(tz=_IST_TZ).normalize().tz_localize(None)
+    return today - pd.Timedelta(days=SECONDS_LOOKBACK_DAYS)
 
 
 def _expected_cols(oi: bool) -> List[str]:
@@ -167,6 +180,16 @@ class DataDownloader:
         if from_dt > to_dt:
             raise ValueError(
                 f"start_date '{start_date}' must not be after end_date '{end_date}'"
+            )
+
+        # Warn rather than trim: the caller asked for these dates, and the
+        # retention period is Zerodha's to change.
+        cutoff = _seconds_cutoff() if interval.is_seconds else None
+        if cutoff is not None and from_dt < cutoff:
+            logger.warning(
+                "Zerodha keeps %s candles for only the last %d trading days; "
+                "dates before %s will most likely come back empty.",
+                interval.value, SECONDS_RETENTION_TRADING_DAYS, cutoff.date(),
             )
 
         # Resolve symbol once — avoids a linear DataFrame scan per window.

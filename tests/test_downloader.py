@@ -1,5 +1,6 @@
 """Unit tests for DataDownloader and its module-level helpers."""
 
+import logging
 from datetime import date
 from unittest.mock import MagicMock
 
@@ -89,6 +90,11 @@ class TestDateWindows:
 class TestMaxDays:
 
     @pytest.mark.parametrize("interval, expected", [
+        (Interval.SECOND_5, 2),
+        (Interval.SECOND_10, 2),
+        (Interval.SECOND_15, 2),
+        (Interval.SECOND_30, 2),
+        (Interval.SECOND_45, 2),
         (Interval.MINUTE_1, 60),
         (Interval.MINUTE_3, 60),
         (Interval.MINUTE_5, 100),
@@ -105,6 +111,58 @@ class TestMaxDays:
     def test_every_interval_has_a_limit(self):
         for interval in Interval:
             assert _max_days(interval) > 0
+
+
+# ---------------------------------------------------------------------------
+# Seconds intervals
+# ---------------------------------------------------------------------------
+
+class TestSecondsIntervals:
+
+    _SECONDS = [Interval.SECOND_5, Interval.SECOND_10, Interval.SECOND_15,
+                Interval.SECOND_30, Interval.SECOND_45]
+
+    def test_is_seconds(self):
+        assert [i for i in Interval if i.is_seconds] == self._SECONDS
+
+    def test_url_windows_and_timestamps(self, downloader, mock_session):
+        mock_session.get.return_value = _api_resp(
+            [["2026-11-06T09:15:15+0530", 1.0, 2.0, 0.5, 1.5, 10],
+             ["2026-11-06T09:15:30+0530", 1.5, 2.5, 1.0, 2.0, 20]]
+        )
+        df = downloader.fetch(408065, "2026-11-04", "2026-11-07", Interval.SECOND_15)
+
+        calls = mock_session.get.call_args_list
+        assert [(c.kwargs["params"]["from"], c.kwargs["params"]["to"]) for c in calls] == [
+            ("2026-11-04 00:00:00", "2026-11-05 23:59:59"),
+            ("2026-11-06 00:00:00", "2026-11-07 23:59:59"),
+        ]
+        assert all(c.args[0].endswith("/instruments/historical/408065/15second") for c in calls)
+        assert list(df["datetime"]) == [
+            pd.Timestamp("2026-11-06 09:15:15"), pd.Timestamp("2026-11-06 09:15:30"),
+        ]
+
+    def test_old_dates_log_a_warning(self, downloader, mock_session, caplog):
+        # Other tests change the "pyzdata" logger's level; pin the one we need.
+        caplog.set_level(logging.WARNING, logger="pyzdata.downloader")
+        mock_session.get.return_value = _api_resp([])
+        downloader.fetch(408065, "2024-01-01", "2024-01-02", Interval.SECOND_5)
+        assert "last 2 trading days" in caplog.text
+
+    def test_recent_dates_do_not_warn(self, downloader, mock_session, caplog):
+        # Other tests change the "pyzdata" logger's level; pin the one we need.
+        caplog.set_level(logging.WARNING, logger="pyzdata.downloader")
+        mock_session.get.return_value = _api_resp([])
+        today = pd.Timestamp.now(tz="Asia/Kolkata").date()
+        downloader.fetch(408065, str(today - pd.Timedelta(days=7)), str(today), Interval.SECOND_5)
+        assert "trading days" not in caplog.text
+
+    def test_other_intervals_do_not_warn(self, downloader, mock_session, caplog):
+        # Other tests change the "pyzdata" logger's level; pin the one we need.
+        caplog.set_level(logging.WARNING, logger="pyzdata.downloader")
+        mock_session.get.return_value = _api_resp([])
+        downloader.fetch(408065, "2024-01-01", "2024-01-02", Interval.MINUTE_1)
+        assert "trading days" not in caplog.text
 
 
 # ---------------------------------------------------------------------------

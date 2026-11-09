@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import re
 from datetime import date, timedelta
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import pandas as pd
 
-from .models import Interval
+from .models import SECONDS_LOOKBACK_DAYS, Interval
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Static tables
@@ -49,7 +49,8 @@ PERIODS: Dict[str, int] = {
     "5Y": 1825,
 }
 
-#: Every interval the library supports, by display label.
+#: Every interval the library supports, by display label.  The ones not in
+#: :data:`MAIN_INTERVALS` are listed under "Other" in this order — shortest first.
 INTERVALS: Dict[str, Interval] = {
     "Day":     Interval.DAY,
     "1 hour":  Interval.HOUR_1,
@@ -57,6 +58,11 @@ INTERVALS: Dict[str, Interval] = {
     "15 min":  Interval.MINUTE_15,
     "5 min":   Interval.MINUTE_5,
     "1 min":   Interval.MINUTE_1,
+    "5 sec":   Interval.SECOND_5,
+    "10 sec":  Interval.SECOND_10,
+    "15 sec":  Interval.SECOND_15,
+    "30 sec":  Interval.SECOND_30,
+    "45 sec":  Interval.SECOND_45,
     "2 min":   Interval.MINUTE_2,
     "3 min":   Interval.MINUTE_3,
     "4 min":   Interval.MINUTE_4,
@@ -73,6 +79,19 @@ MAIN_INTERVALS: List[str] = ["Day", "1 hour", "30 min", "15 min", "5 min", "1 mi
 def period_to_dates(label: str, today: date) -> Tuple[date, date]:
     """Turn a :data:`PERIODS` label into a ``(start, end)`` date pair."""
     return today - timedelta(days=PERIODS[label]), today
+
+
+def seconds_range(start: date, end: date, today: date) -> Optional[Tuple[date, date]]:
+    """The part of ``[start, end]`` that can still hold seconds candles.
+
+    Zerodha keeps seconds candles for only the last couple of trading days, so
+    days before ``today - SECONDS_LOOKBACK_DAYS`` are dropped — the same span
+    as the "1W" period.  ``None`` when the whole range is older than that.
+    """
+    earliest = today - timedelta(days=SECONDS_LOOKBACK_DAYS)
+    if end < earliest:
+        return None
+    return max(start, earliest), end
 
 
 # ─────────────────────────────────────────────────────────────────────────────

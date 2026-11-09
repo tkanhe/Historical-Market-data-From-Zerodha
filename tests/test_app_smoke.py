@@ -5,11 +5,13 @@ session state, exactly where a real login would store it.
 """
 
 import time
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
+from pyzdata import Interval
 from pyzdata.exceptions import DataFetchError, PartialDataError
 
 pytest.importorskip("streamlit")
@@ -43,7 +45,7 @@ class FakeClient:
         return 408065
 
     def get_data(self, token, start, end, interval, oi=False, progress_callback=None):
-        self.requests.append({"interval": interval, "oi": oi})
+        self.requests.append({"interval": interval, "oi": oi, "start": start, "end": end})
         if progress_callback:
             progress_callback(1, 1)
         return self._get_data()
@@ -152,6 +154,57 @@ class TestDownloader:
 
         assert client.closed
         assert [t.label for t in at.text_input] == ["Enctoken"]
+
+
+def pick_seconds(at: AppTest, label: str = "15 sec") -> AppTest:
+    at.button_group(key="interval").select("Other").run()
+    return at.selectbox(key="other_interval").select(label).run()
+
+
+class TestSecondsIntervals:
+
+    def test_long_period_is_trimmed_to_the_last_week(self):
+        client = FakeClient()
+        at = logged_in(client)  # default period is 1Y
+        at.selectbox(key="symbol_NSE").select("RELIANCE").run()
+        pick_seconds(at)
+
+        captions = [c.value for c in at.caption]
+        assert any("last 2 trading days — earlier dates are skipped" in c for c in captions)
+        assert not any(f"{date.today() - timedelta(days=365):%d %b %Y} →" in c for c in captions)
+
+        button(at, "Download RELIANCE").click().run()
+        assert not at.exception
+        assert client.requests[0]["interval"] is Interval.SECOND_15
+        assert client.requests[0]["start"] == str(date.today() - timedelta(days=7))
+        assert client.requests[0]["end"] == str(date.today())
+
+    def test_one_week_is_not_trimmed(self):
+        at = logged_in(FakeClient())
+        at.button_group(key="period").select("1W").run()
+        pick_seconds(at)
+        assert any("trading days." in c.value for c in at.caption)
+        assert not any("skipped" in c.value for c in at.caption)
+
+    def test_custom_period_in_the_past_is_refused(self):
+        at = logged_in(FakeClient())
+        at.selectbox(key="symbol_NSE").select("RELIANCE").run()
+        at.button_group(key="period").select("Custom").run()
+        at.date_input[0].set_value(date(2024, 1, 1)).run()
+        at.date_input[1].set_value(date(2024, 3, 31)).run()
+        pick_seconds(at)
+
+        assert "so this period has none" in at.error[0].value
+        assert button(at, "Download RELIANCE").disabled
+
+    def test_no_data_explains_the_retention(self):
+        at = logged_in(FakeClient(get_data=lambda: candles(0)))
+        at.selectbox(key="symbol_NSE").select("RELIANCE").run()
+        pick_seconds(at)
+        button(at, "Download RELIANCE").click().run()
+
+        assert "no 15 sec data" in at.warning[0].value
+        assert "last 2 trading days" in at.warning[0].value
 
 
 class TestDownloadSurvivesReruns:

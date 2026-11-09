@@ -14,7 +14,7 @@ Download historical OHLCV and Open Interest candle data for any stock, index, or
 ## What you can do with PyZData
 
 - Download price history for **any stock or index** listed on Zerodha (NSE, BSE, NFO, MCX)
-- Choose intervals from **1-minute to daily**
+- Choose intervals from **5 seconds to daily**
 - Export clean **pandas DataFrames** ready for backtesting, charting, or ML
 - Use the **web app** — no coding needed
 - Use the **CLI** — one-liner downloads from the terminal
@@ -39,7 +39,7 @@ Everything is on one page:
 
 1. **Log in** — paste your enctoken (checked immediately) or use your user ID, password and TOTP
 2. **Pick an instrument** — a searchable dropdown of everything Zerodha lists; for futures & options pick the underlying, then the contract
-3. **Pick a period and interval** — one click each (`1W` … `5Y` or custom dates; `Day` … `1 min`)
+3. **Pick a period and interval** — one click each (`1W` … `5Y` or custom dates; `Day` … `1 min`, seconds under *Other*)
 4. **Download** — see a price chart and save the result as **CSV** or **Excel (.xlsx)**
 
 ---
@@ -91,6 +91,12 @@ print(df.head())
 # Download 1-minute candles with Open Interest (F&O instruments)
 fut_token = client.get_instrument_token("NIFTY24JANFUT", "NFO")
 df = client.get_data(fut_token, "2024-01-02", "2024-01-25", Interval.MINUTE_1, oi=True)
+
+# 15-second candles — Zerodha keeps seconds data for the last 2 trading days only,
+# so ask for the past week (older dates come back empty and log a warning)
+from datetime import date, timedelta
+today = date.today()
+df = client.get_data(token, str(today - timedelta(days=7)), str(today), Interval.SECOND_15)
 ```
 
 **Output columns:** `tradingsymbol, datetime, open, high, low, close, volume` (+ `open_interest` when `oi=True`)
@@ -99,7 +105,7 @@ Symbol lookup forgives case and extra spaces (`"reliance"` works), and an invali
 expired enctoken is rejected as soon as the client is created.
 
 Long ranges are split into as few requests as Zerodha allows — 5 years of daily candles
-is a single request; 1-minute candles need one request per 60 days.
+is a single request; 1-minute candles need one request per 60 days; seconds candles one per 2 days.
 
 **Context manager** — automatically closes the HTTP session when done:
 
@@ -148,12 +154,16 @@ pyzdata search --help
 
 | Enum | Interval | Best for |
 |------|----------|----------|
+| `Interval.SECOND_5` … `Interval.SECOND_45` | 5, 10, 15, 30, 45 seconds | Very short-term / scalping (last 2 trading days only) |
 | `Interval.MINUTE_1` | 1 minute | Intraday scalping analysis |
 | `Interval.MINUTE_5` | 5 minutes | Intraday charts |
 | `Interval.MINUTE_15` | 15 minutes | Intraday / short-term |
 | `Interval.MINUTE_30` | 30 minutes | Swing trading |
 | `Interval.HOUR_1` | 1 hour | Swing / positional |
 | `Interval.DAY` | Daily | Long-term investing & backtesting |
+
+On the CLI the interval names are the values Kite uses: `5second`, `10second`, `15second`,
+`30second`, `45second`, `minute`, `2minute` … `60minute`, `2hour`, `3hour`, `4hour`, `day`.
 
 ---
 

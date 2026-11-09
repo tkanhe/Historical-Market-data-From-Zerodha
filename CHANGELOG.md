@@ -5,6 +5,18 @@ All notable changes to PyZData are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Seconds intervals** — `Interval.SECOND_5`, `SECOND_10`, `SECOND_15`, `SECOND_30` and
+  `SECOND_45` (`5second` … `45second` on the CLI; *5 sec* … *45 sec* at the top of *Other*
+  in the web app). Zerodha keeps seconds candles for only the last 2 trading days, so:
+  - they are fetched two days per request
+  - the library and CLI log a warning when a seconds request starts more than a week ago
+  - the web app trims the period to the last week instead of sending years of requests,
+    and refuses a custom period that ends before that
+- `Interval.is_seconds` property
+
 ## [1.1.0] - 2026-09-20
 
 ### Added
